@@ -38,12 +38,18 @@ if [[ ${#pkgs[@]} -eq 0 ]]; then
 	exit 1
 fi
 
+# Start from a clean staging dir so the build is deterministic.
+rm -rf "${DIST}"
 mkdir -p "${DIST}"
 
-# Pull the current release contents so repo-add can update incrementally.
-# Ignore failure: the release may not exist yet on the very first run.
-echo ">> Fetching current release assets (if any)"
-gh release download "${TAG}" -R "${REPO}" -D "${DIST}" --clobber 2>/dev/null || true
+# Pull only the current database from the release so repo-add can update it
+# incrementally. The old package files stay in the release untouched; we don't need
+# them locally, and we won't re-upload them. Ignore failure: the release (or the DB)
+# may not exist yet on the very first run.
+echo ">> Fetching current database (if any)"
+gh release download "${TAG}" -R "${REPO}" -D "${DIST}" \
+	--pattern "${DBNAME}.db.tar.gz" --pattern "${DBNAME}.files.tar.gz" \
+	2>/dev/null || true
 
 # Build each package and collect the resulting archives.
 built=()
@@ -66,13 +72,26 @@ if [[ ${#built[@]} -eq 0 ]]; then
 	exit 1
 fi
 
-# Update the repo database with the newly built packages.
+# Add the newly built packages to the database (creating it on the first run).
+# repo-add won't refresh an entry whose pkgver-pkgrel is unchanged, but each
+# makepkg run produces byte-different output. Remove the entry first so the DB
+# always records the current build's checksum and stays in sync with the upload.
 echo ">> Updating ${DBNAME} database"
-( cd "${DIST}" && repo-add --new --remove "${DBNAME}.db.tar.gz" "${built[@]}" )
+names=()
+for f in "${built[@]}"; do
+	names+=("$(bsdtar -xOqf "${DIST}/${f}" .PKGINFO | sed -n 's/^pkgname = //p')")
+done
+if [[ -f "${DIST}/${DBNAME}.db.tar.gz" ]]; then
+	( cd "${DIST}" && repo-remove "${DBNAME}.db.tar.gz" "${names[@]}" 2>/dev/null || true )
+fi
+( cd "${DIST}" && repo-add --new "${DBNAME}.db.tar.gz" "${built[@]}" )
 
 # pacman fetches assets literally named "<db>.db" / "<db>.files"; release assets
-# can't be symlinks, so publish real copies under those names.
-( cd "${DIST}" && cp -f "${DBNAME}.db.tar.gz" "${DBNAME}.db" && cp -f "${DBNAME}.files.tar.gz" "${DBNAME}.files" )
+# can't be symlinks, and repo-add leaves those names as symlinks to the .tar.gz,
+# so replace them with real copies (--remove-destination drops the symlink first).
+( cd "${DIST}" \
+	&& cp -f --remove-destination "${DBNAME}.db.tar.gz" "${DBNAME}.db" \
+	&& cp -f --remove-destination "${DBNAME}.files.tar.gz" "${DBNAME}.files" )
 
 # Create the release on first run, then upload everything (clobbering old assets).
 if ! gh release view "${TAG}" -R "${REPO}" >/dev/null 2>&1; then
