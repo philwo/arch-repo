@@ -1,0 +1,9 @@
+# makepkg build artifacts
+src/
+pkg/
+*.pkg.tar.zst
+*.pkg.tar.zst.sig
+*.log
+
+# staging dir for release uploads
+dist/
