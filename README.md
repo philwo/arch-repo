@@ -6,15 +6,14 @@ pacman installs them from there.
 
 - pacman repo name: `[philwo]`
 - release tag that holds the packages: `x86_64`
-- hosting repo (private): `philwo/arch-repo`
+- hosting repo (public): `philwo/arch-repo`
 
 ## Layout
 
 ```
 packages/<name>/PKGBUILD   one directory per package
 bin/build.sh               build packages and publish them to the release
-bin/setup-machine.sh       configure a machine to install from this repo (sudo)
-bin/github-xfer.sh         pacman download wrapper (installed by setup-machine.sh)
+bin/setup-machine.sh       add the [philwo] repo to a machine's pacman.conf (sudo)
 dist/                      local staging for release uploads (gitignored)
 ```
 
@@ -35,35 +34,33 @@ dist/                      local staging for release uploads (gitignored)
 
 ## Install on a machine
 
-Because the repo is private, pacman can't fetch the release assets on its own (for
-private repos even the plain `releases/download` URL 404s, so a token alone is not
-enough). A small `XferCommand` wrapper routes `github.com` release downloads through
-`gh release download`, which uses the API asset endpoint that private repos need.
-You need `gh` and `curl` installed (both are in the official repos). Set it up once:
+The repo is public, so pacman fetches the release assets directly with its built-in
+downloader - no token, no custom `XferCommand`. Add the repo once:
 
 ```
 sudo bin/setup-machine.sh
 ```
 
-This stores your `gh` token in `/etc/pacman.d/github-token` (mode 600), installs the
-wrapper to `/etc/pacman.d/github-xfer.sh`, and adds the `XferCommand` line plus the
-`[philwo]` section to `/etc/pacman.conf`. Then:
+This appends the `[philwo]` section to `/etc/pacman.conf`. Or add it by hand:
+
+```
+[philwo]
+SigLevel = Optional TrustAll
+Server = https://github.com/philwo/arch-repo/releases/download/x86_64
+```
+
+Then:
 
 ```
 sudo pacman -Sy
 sudo pacman -S hello-philwo
 ```
 
-Note: `XferCommand` is global (it applies to every repo), so the wrapper passes all
-non-github URLs straight through to `curl`. If your token expires, re-run
-`sudo bin/setup-machine.sh` to refresh it.
+Building and publishing (`bin/build.sh`) still needs `gh` authenticated as the repo
+owner. Installing does not.
 
 ## Notes
 
-- `XferCommand` is global: setting it makes pacman use the wrapper (curl) for every
-  repo instead of its built-in downloader, so `ParallelDownloads` no longer applies.
-  On a machine where you care about that, this is the cost of pulling from a private
-  repo.
 - Packages are not signed (`SigLevel = Optional TrustAll`). Signing with a GPG key
   is a possible future improvement.
 - Only `x86_64` is published today. An `aarch64` tag could be added for Apple
